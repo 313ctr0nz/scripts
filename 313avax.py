@@ -1,7 +1,12 @@
 import argparse
+import datetime
 import json
 import requests
 import time 
+
+import cg
+
+currency = "usd"
 
 signatures = {
     "Transfer"  : "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
@@ -24,6 +29,31 @@ def fetchtkn(contractAddr, apikey):
         print("Timeout")
         return {}
 
+def fetchdate(blockno, apikey):
+    url = f"https://api.snowtrace.io/api?module=block&action=getblockreward&blockno={blockno}&apikey={apikey}"
+    # print(url)
+    res = requests.get(url)
+    # print(json.dumps(res.json()))   
+    return datetime.datetime.fromtimestamp(int(res.json().get("result").get("timeStamp"))).strftime("%d-%m-%Y")
+
+def parsedata(log):
+    data = []
+    if len(log.get("data")) == 66:
+        data.append(log.get("data"))
+    if len(log.get("data")) == 130:
+        data.append(log.get("data")[0:66])
+        data.append(log.get("data")[66:])
+        # print(data)
+    if len(log.get("data")) == 258:
+        data.append(log.get("data")[0:66])
+        data.append(log.get("data")[66:])
+        # print(data)
+
+    returndata = []
+    for d in data:
+        returndata.append({"amount" : int(d,16)/(10**int(addrs[log.get("address")].get("decimal")))})
+
+    return returndata
 
 def fetchtxn(r, apikey):
     # print(r)
@@ -35,11 +65,16 @@ def fetchtxn(r, apikey):
     if res.json().get("result").get("logs"):
         print("txn: " + res.json().get("result").get("transactionHash"))
 
+        txndate = fetchdate(int(res.json().get("result").get("blockNumber"),16),apikey)
+        print(txndate)
+
+        # print(res.json().get("result"))
         for log in res.json().get("result").get("logs"):
             # print(log) 
             if signatures.get("Transfer") not in log.get("topics"):
                 continue
             if not addrs.get(log.get("address")):
+                time.sleep(0.1)
                 token = fetchtkn(log.get("address"),apikey)
                 # print(token)
                 if "symbol" not in token:
@@ -47,23 +82,14 @@ def fetchtxn(r, apikey):
                     continue
                 else:
                     addrs[log.get("address")] = token
+
+            value = cg.cg_getPrice(addrs[log.get("address")].get("symbol").lower(), txndate, currency)
+            print(value)
+
             print(addrs[log.get("address")])
-            data = []
-            if len(log.get("data")) == 66:
-                data.append(log.get("data"))
-            if len(log.get("data")) == 130:
-                data.append(log.get("data")[0:66])
-                data.append(log.get("data")[66:])
-                # print(data)
-            if len(log.get("data")) == 258:
-                data.append(log.get("data")[0:66])
-                data.append(log.get("data")[66:])
-                # print(data)
-
-            for d in data:
-                print(int(d,16)/(10**int(addrs[log.get("address")].get("decimal"))))
-
-                
+            # print(log.get("address"))
+            txndata = parsedata(log) 
+            print(txndata)             
 
 def fetch(address, apikey):
     url = "https://api.snowtrace.io/api?module=account&action=txlist&address="+address+"&startblock=1&endblock=99999999&sort=asc&apikey=" + apikey
@@ -81,6 +107,8 @@ if __name__ == "__main__":
     parser.add_argument('--apikey', type=str, required=True)
     parser.add_argument('--txn',    type=str, required=False)
     args = parser.parse_args()
+
+    cg.init()
 
     if args.txn:
         fetchtxn({ "hash" : args.txn }, args.apikey)
